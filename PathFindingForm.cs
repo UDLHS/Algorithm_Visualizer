@@ -1,0 +1,297 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Linq;
+using System.Windows.Forms;
+
+namespace AlgorithmVisualizer
+{
+    public partial class PathfindingForm : Form
+    {
+        // === Core Data ===
+        private GridTile[,] _grid;
+        private int _rows = 20;
+        private int _cols = 30;
+        private int _cellSize = 25;
+        private (int r, int c)? _startPos = null;
+        private (int r, int c)? _endPos = null;
+        private bool _isMouseDown = false;
+        private bool _isRunning = false;
+        private (int r, int c)? _lastDrawnCell = null; // Track last cell to avoid spam
+
+        // Animation
+        private PathfindingAlgorithm _algorithm;
+        private List<PathfindingStep> _steps;
+        private int _currentStep;
+        private System.Windows.Forms.Timer _animationTimer;
+        private VisualizerSettings _settings = new VisualizerSettings();
+
+        // Placement state: 0=none, 1=start placed, 2=end placed, 3=ready for walls
+        private int _placementState = 0;
+
+        public PathfindingForm()
+        {
+            InitializeComponent();
+
+            _animationTimer = new System.Windows.Forms.Timer();
+            _animationTimer.Tick += AnimationTimer_Tick;
+
+            if (comboAlgorithm.Items.Count > 0)
+                comboAlgorithm.SelectedIndex = 0;
+
+            InitializeGrid();
+        }
+
+        // === Initialize / Resize Grid ===
+        private void InitializeGrid()
+        {
+            _rows = _settings.GridRows;
+            _cols = _settings.GridCols;
+            _grid = new GridTile[_rows, _cols];
+
+            for (int r = 0; r < _rows; r++)
+                for (int c = 0; c < _cols; c++)
+                    _grid[r, c] = new GridTile { Row = r, Col = c };
+
+            _startPos = null;
+            _endPos = null;
+            _placementState = 0;
+            _lastDrawnCell = null;
+            lblStatus.Text = "Click to place Start, then End, then drag to draw Walls";
+
+            panelGrid.Invalidate();
+        }
+
+        // === Grid Paint Event ===
+        private void panelGrid_Paint(object sender, PaintEventArgs e)
+        {
+            if (_grid == null) return;
+
+            Graphics g = e.Graphics;
+
+            // Calculate cell size to fit panel
+            _cellSize = Math.Min(panelGrid.Width / _cols, panelGrid.Height / _rows);
+            if (_cellSize < 1) _cellSize = 1;
+
+            for (int r = 0; r < _rows; r++)
+            {
+                for (int c = 0; c < _cols; c++)
+                {
+                    int x = c * _cellSize;
+                    int y = r * _cellSize;
+
+                    Brush brush = Brushes.White;
+
+                    switch (_grid[r, c].Type)
+                    {
+                        case TileType.Wall: brush = Brushes.Black; break;
+                        case TileType.Start: brush = Brushes.Green; break;
+                        case TileType.End: brush = Brushes.Red; break;
+                        case TileType.Visited: brush = Brushes.LightBlue; break;
+                        case TileType.Path: brush = Brushes.Yellow; break;
+                    }
+
+                    g.FillRectangle(brush, x, y, _cellSize - 1, _cellSize - 1);
+                    g.DrawRectangle(Pens.Gray, x, y, _cellSize - 1, _cellSize - 1);
+                }
+            }
+        }
+
+        // === Mouse Interaction ===
+        private void panelGrid_MouseDown(object sender, MouseEventArgs e)
+        {
+            _isMouseDown = true;
+            _lastDrawnCell = null; // Reset for new drag
+            HandleGridClick(e);
+        }
+
+        private void panelGrid_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (!_isMouseDown) return;
+            HandleGridClick(e);
+        }
+
+        private void panelGrid_MouseUp(object sender, MouseEventArgs e)
+        {
+            _isMouseDown = false;
+            _lastDrawnCell = null;
+        }
+
+        private void HandleGridClick(MouseEventArgs e)
+        {
+            if (_isRunning) return;
+
+            int c = e.X / _cellSize;
+            int r = e.Y / _cellSize;
+
+            if (r < 0 || r >= _rows || c < 0 || c >= _cols) return;
+
+            var tile = _grid[r, c];
+            var currentCell = (r, c);
+
+            // State machine for placement
+            if (_placementState == 0) // Place start
+            {
+                if (tile.Type == TileType.Empty)
+                {
+                    tile.Type = TileType.Start;
+                    _startPos = (r, c);
+                    _placementState = 1;
+                    lblStatus.Text = "Now click to place End point";
+                    panelGrid.Invalidate();
+                }
+            }
+            else if (_placementState == 1) // Place end
+            {
+                if (tile.Type == TileType.Empty)
+                {
+                    tile.Type = TileType.End;
+                    _endPos = (r, c);
+                    _placementState = 2;
+                    lblStatus.Text = "Drag to draw walls (Right-click to erase)";
+                    panelGrid.Invalidate();
+                }
+            }
+            else if (_placementState == 2) // Draw walls / erase
+            {
+                // Don't overwrite start or end
+                if (tile.Type == TileType.Start || tile.Type == TileType.End)
+                    return;
+
+                // Skip if we're on the same cell as last draw (prevents spam)
+                if (_lastDrawnCell.HasValue && _lastDrawnCell.Value == currentCell)
+                    return;
+
+                if (e.Button == MouseButtons.Left)
+                {
+                    if (tile.Type == TileType.Empty)
+                    {
+                        tile.Type = TileType.Wall;
+                        _lastDrawnCell = currentCell;
+                        panelGrid.Invalidate();
+                    }
+                }
+                else if (e.Button == MouseButtons.Right)
+                {
+                    if (tile.Type == TileType.Wall)
+                    {
+                        tile.Type = TileType.Empty;
+                        _lastDrawnCell = currentCell;
+                        panelGrid.Invalidate();
+                    }
+                }
+            }
+        }
+
+        // === Start Pathfinding ===
+        private void btnStart_Click(object sender, EventArgs e)
+        {
+            if (_startPos == null || _endPos == null)
+            {
+                MessageBox.Show("Please place both Start and End tiles!", "Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            // Reset any previous visited/path but keep walls/start/end
+            for (int r = 0; r < _rows; r++)
+                for (int c = 0; c < _cols; c++)
+                    if (_grid[r, c].Type == TileType.Visited || _grid[r, c].Type == TileType.Path)
+                        _grid[r, c].Type = TileType.Empty;
+
+            // Restore start and end
+            _grid[_startPos.Value.r, _startPos.Value.c].Type = TileType.Start;
+            _grid[_endPos.Value.r, _endPos.Value.c].Type = TileType.End;
+
+            string selected = comboAlgorithm.SelectedItem?.ToString();
+            if (selected == "Breadth-First Search")
+                _algorithm = new BFSAlgorithm();
+            else
+            {
+                MessageBox.Show("Please select an algorithm!");
+                return;
+            }
+
+            _steps = _algorithm.Run(_grid, _startPos.Value, _endPos.Value);
+            _currentStep = 0;
+            _isRunning = true;
+
+            btnStart.Enabled = false;
+            btnClear.Enabled = false;
+
+            _animationTimer.Interval = _settings.AnimationDelayMs;
+            _animationTimer.Start();
+        }
+
+        // === Animation Timer ===
+        private void AnimationTimer_Tick(object sender, EventArgs e)
+        {
+            if (_currentStep >= _steps.Count)
+            {
+                _animationTimer.Stop();
+                _isRunning = false;
+                btnStart.Enabled = true;
+                btnClear.Enabled = true;
+                return;
+            }
+
+            var step = _steps[_currentStep];
+
+            // Apply visited
+            foreach (var (r, c) in step.NewlyVisited)
+            {
+                if (_grid[r, c].Type != TileType.Start && _grid[r, c].Type != TileType.End)
+                    _grid[r, c].Type = TileType.Visited;
+            }
+
+            // Apply final path
+            if (step.IsComplete)
+            {
+                foreach (var (r, c) in step.FinalPath)
+                {
+                    if (_grid[r, c].Type != TileType.Start && _grid[r, c].Type != TileType.End)
+                        _grid[r, c].Type = TileType.Path;
+                }
+
+                if (step.FinalPath.Count == 0)
+                    lblStatus.Text = "No path found!";
+                else
+                    lblStatus.Text = $"Path found! Length: {step.FinalPath.Count}";
+            }
+
+            _currentStep++;
+            panelGrid.Invalidate();
+        }
+
+        // === Clear Grid ===
+        private void btnClear_Click(object sender, EventArgs e)
+        {
+            _animationTimer?.Stop();
+            _isRunning = false;
+            InitializeGrid();
+            btnStart.Enabled = true;
+        }
+
+        // === Settings ===
+        private void btnSettings_Click(object sender, EventArgs e)
+        {
+            using (var settingsForm = new SettingsForm(_settings))
+            {
+                if (settingsForm.ShowDialog() == DialogResult.OK)
+                {
+                    _animationTimer.Interval = _settings.AnimationDelayMs;
+                    if (_rows != _settings.GridRows || _cols != _settings.GridCols)
+                    {
+                        InitializeGrid();
+                    }
+                }
+            }
+        }
+
+        // === Clean up ===
+        private void PathfindingForm_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            _animationTimer?.Stop();
+        }
+    }
+}
