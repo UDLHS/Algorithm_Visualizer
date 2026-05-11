@@ -72,7 +72,7 @@
             this.lblStatus.AutoSize = true;
             this.lblStatus.Location = new System.Drawing.Point(230, 18);
             this.lblStatus.Name = "lblStatus";
-            this.lblStatus.Size = new System.Drawing.Size(200, 16);
+            this.lblStatus.Size = new System.Drawing.Size(280, 16);
             this.lblStatus.TabIndex = 4;
             this.lblStatus.Text = "Click to place Start, then End, then draw Walls";
             // 

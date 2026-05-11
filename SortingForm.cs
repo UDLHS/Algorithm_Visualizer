@@ -14,6 +14,8 @@ namespace AlgorithmVisualizer
         private int _currentStepIndex;
         private SortingAlgorithm _algorithm;
         private System.Windows.Forms.Timer _animationTimer;
+
+        // IMPORTANT: Single settings instance shared with SettingsForm
         private VisualizerSettings _settings = new VisualizerSettings();
 
         // === Constructor ===
@@ -145,20 +147,44 @@ namespace AlgorithmVisualizer
                 lblComparisons.Text = $"Comparisons: {currentStep.ComparisonCount}";
         }
 
-        // === Settings Button ===
+        // === SETTINGS: Open Settings Form ===
         private void btnSettings_Click(object sender, EventArgs e)
         {
+            // Pass the SAME settings object (by reference)
             using (var settingsForm = new SettingsForm(_settings))
             {
                 if (settingsForm.ShowDialog() == DialogResult.OK)
                 {
-                    _animationTimer.Interval = _settings.AnimationDelayMs;
-                    if (_array == null || _array.Length != _settings.ArraySize)
-                    {
-                        GenerateArray();
-                    }
+                    // Settings were saved! Apply them now.
+                    ApplySettings();
                 }
             }
+        }
+
+        // === SETTINGS: Apply new settings values ===
+        private void ApplySettings()
+        {
+            // 1. Update timer interval if animation is running
+            if (_animationTimer != null)
+                _animationTimer.Interval = _settings.AnimationDelayMs;
+
+            // 2. If array size changed, regenerate the array
+            if (_array == null || _array.Length != _settings.ArraySize)
+            {
+                _animationTimer.Stop();
+                _steps = null;
+                _currentStepIndex = 0;
+                GenerateArray();
+            }
+
+            // Show confirmation (optional — remove after testing)
+            MessageBox.Show(
+                $"Settings applied!\n\n" +
+                $"Array Size: {_settings.ArraySize}\n" +
+                $"Animation Delay: {_settings.AnimationDelayMs}ms",
+                "Settings Updated",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
         }
 
         // === Generate Button ===

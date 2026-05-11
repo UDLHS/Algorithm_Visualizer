@@ -17,13 +17,15 @@ namespace AlgorithmVisualizer
         private (int r, int c)? _endPos = null;
         private bool _isMouseDown = false;
         private bool _isRunning = false;
-        private (int r, int c)? _lastDrawnCell = null; // Track last cell to avoid spam
+        private (int r, int c)? _lastDrawnCell = null;
 
         // Animation
         private PathfindingAlgorithm _algorithm;
         private List<PathfindingStep> _steps;
         private int _currentStep;
         private System.Windows.Forms.Timer _animationTimer;
+
+        // IMPORTANT: Single settings instance shared with SettingsForm
         private VisualizerSettings _settings = new VisualizerSettings();
 
         // Placement state: 0=none, 1=start placed, 2=end placed, 3=ready for walls
@@ -69,7 +71,6 @@ namespace AlgorithmVisualizer
 
             Graphics g = e.Graphics;
 
-            // Calculate cell size to fit panel
             _cellSize = Math.Min(panelGrid.Width / _cols, panelGrid.Height / _rows);
             if (_cellSize < 1) _cellSize = 1;
 
@@ -101,7 +102,7 @@ namespace AlgorithmVisualizer
         private void panelGrid_MouseDown(object sender, MouseEventArgs e)
         {
             _isMouseDown = true;
-            _lastDrawnCell = null; // Reset for new drag
+            _lastDrawnCell = null;
             HandleGridClick(e);
         }
 
@@ -129,7 +130,6 @@ namespace AlgorithmVisualizer
             var tile = _grid[r, c];
             var currentCell = (r, c);
 
-            // State machine for placement
             if (_placementState == 0) // Place start
             {
                 if (tile.Type == TileType.Empty)
@@ -154,11 +154,9 @@ namespace AlgorithmVisualizer
             }
             else if (_placementState == 2) // Draw walls / erase
             {
-                // Don't overwrite start or end
                 if (tile.Type == TileType.Start || tile.Type == TileType.End)
                     return;
 
-                // Skip if we're on the same cell as last draw (prevents spam)
                 if (_lastDrawnCell.HasValue && _lastDrawnCell.Value == currentCell)
                     return;
 
@@ -193,13 +191,11 @@ namespace AlgorithmVisualizer
                 return;
             }
 
-            // Reset any previous visited/path but keep walls/start/end
             for (int r = 0; r < _rows; r++)
                 for (int c = 0; c < _cols; c++)
                     if (_grid[r, c].Type == TileType.Visited || _grid[r, c].Type == TileType.Path)
                         _grid[r, c].Type = TileType.Empty;
 
-            // Restore start and end
             _grid[_startPos.Value.r, _startPos.Value.c].Type = TileType.Start;
             _grid[_endPos.Value.r, _endPos.Value.c].Type = TileType.End;
 
@@ -237,14 +233,12 @@ namespace AlgorithmVisualizer
 
             var step = _steps[_currentStep];
 
-            // Apply visited
             foreach (var (r, c) in step.NewlyVisited)
             {
                 if (_grid[r, c].Type != TileType.Start && _grid[r, c].Type != TileType.End)
                     _grid[r, c].Type = TileType.Visited;
             }
 
-            // Apply final path
             if (step.IsComplete)
             {
                 foreach (var (r, c) in step.FinalPath)
@@ -272,20 +266,46 @@ namespace AlgorithmVisualizer
             btnStart.Enabled = true;
         }
 
-        // === Settings ===
+        // === SETTINGS: Open Settings Form ===
         private void btnSettings_Click(object sender, EventArgs e)
         {
+            // Pass the SAME settings object (by reference)
             using (var settingsForm = new SettingsForm(_settings))
             {
                 if (settingsForm.ShowDialog() == DialogResult.OK)
                 {
-                    _animationTimer.Interval = _settings.AnimationDelayMs;
-                    if (_rows != _settings.GridRows || _cols != _settings.GridCols)
-                    {
-                        InitializeGrid();
-                    }
+                    // Settings were saved! Apply them now.
+                    ApplySettings();
                 }
             }
+        }
+
+        // === SETTINGS: Apply new settings values ===
+        private void ApplySettings()
+        {
+            // 1. Update timer interval if animation is running
+            if (_animationTimer != null)
+                _animationTimer.Interval = _settings.AnimationDelayMs;
+
+            // 2. If grid size changed, rebuild the grid
+            if (_rows != _settings.GridRows || _cols != _settings.GridCols)
+            {
+                _animationTimer.Stop();
+                _steps = null;
+                _currentStep = 0;
+                _isRunning = false;
+                InitializeGrid();
+                btnStart.Enabled = true;
+            }
+
+            // Show confirmation (optional — remove after testing)
+            MessageBox.Show(
+                $"Settings applied!\n\n" +
+                $"Grid Size: {_settings.GridRows} x {_settings.GridCols}\n" +
+                $"Animation Delay: {_settings.AnimationDelayMs}ms",
+                "Settings Updated",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
         }
 
         // === Clean up ===
